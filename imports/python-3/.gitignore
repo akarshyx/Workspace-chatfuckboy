@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+bot.env
+.bot_config
+*.db
+*.json
+!bot.env.example
+!telegram_style_reference.json
+!telegram_updates_reference.json
+processed_payments.json
+*.log
+data_backups/
+balance_snapshots/

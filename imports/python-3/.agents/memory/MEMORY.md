@@ -1,0 +1,1 @@
+- [Workspace DNS fallback](workspace-dns-fallback.md) — System DNS failed for public hosts while verified HTTPS lookups worked; the Telegram bot now falls back without changing global DNS.
