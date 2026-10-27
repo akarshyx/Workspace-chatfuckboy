@@ -40956,7 +40956,7 @@ def main():
     try:
         application.run_polling(
             allowed_updates=Update.ALL_TYPES,
-            drop_pending_updates=True,
+            drop_pending_updates=False,
         )
     except Exception as polling_error:
         logger.critical(
