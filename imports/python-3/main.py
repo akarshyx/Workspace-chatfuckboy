@@ -3541,14 +3541,14 @@ deposit_counter = 1
 withdrawal_counter = 1
 
 # Auto crypto withdrawal settings (global toggle)
-auto_crypto_enabled = True  # Enable automatic crypto withdrawals via NOWPayments
+auto_crypto_enabled = False  # Crypto withdrawals require owner review and manual payment.
 
 # Maintenance mode
 casino_maintenance_mode = False
 PAYMENT_MAINTENANCE_MESSAGE = (
-    "🔧 <b>Deposits and withdrawals are temporarily paused</b>\n\n"
+    "🔧 <b>Deposits are temporarily paused</b>\n\n"
     "The casino is under maintenance right now. Your balance is safe.\n"
-    "Please try again when maintenance is finished."
+    "Withdrawal requests are still available for owner review."
 )
 GAME_MAINTENANCE_MESSAGE = (
     "🔧 <b>Casino maintenance is active</b>\n\n"
@@ -4135,10 +4135,26 @@ DEPOSIT_OPTIONS = [
 ]
 
 WITHDRAWAL_OPTIONS = [
-    ("Litecoin (LTC)", "ltc"),
-    ("Ethereum (ETH)", "eth"),
-    ("Toncoin (TON)", "ton"),
-    ("Solana (SOL)", "sol"),
+    ("₿ Bitcoin (BTC)", "btc"),
+    ("Ξ Ethereum (ETH)", "eth"),
+    ("Ł Litecoin (LTC)", "ltc"),
+    ("₮ Tether (USDT · TRC20)", "usdttrc20"),
+    ("◉ USD Coin (USDC · BEP20)", "usdcbsc"),
+    ("◆ BNB (BEP20)", "bnbbsc"),
+    ("◎ Solana (SOL)", "sol"),
+    ("💎 Toncoin (TON)", "ton"),
+    ("🔺 TRON (TRX)", "trx"),
+    ("✕ XRP (XRP)", "xrp"),
+    ("🐕 Dogecoin (DOGE)", "doge"),
+    ("🔷 Cardano (ADA)", "ada"),
+    ("● Polkadot (DOT)", "dot"),
+    ("🏔 Avalanche (AVAX · C-Chain)", "avaxc"),
+    ("🔗 Chainlink (LINK · ERC20)", "link"),
+    ("⭐ Stellar (XLM)", "xlm"),
+    ("⚛ Cosmos (ATOM)", "atom"),
+    ("◈ NEAR Protocol (NEAR)", "near"),
+    ("🟣 Polygon (POL · Polygon)", "matic"),
+    ("🐕 Shiba Inu (SHIB · ERC20)", "shib"),
 ]
 
 # Blockchain explorer URLs for transaction links
@@ -11572,9 +11588,6 @@ async def giftpremium_command(update: Update, context: ContextTypes.DEFAULT_TYPE
             ]]),
         )
         return
-    if payments_blocked_for(user.id):
-        await message.reply_text(PAYMENT_MAINTENANCE_MESSAGE, parse_mode=ParseMode.HTML)
-        return
     await message.reply_text(
         _telegram_premium_plan_text(str(user.id)),
         reply_markup=_telegram_premium_plan_keyboard(),
@@ -12435,10 +12448,6 @@ async def cryptowithdrawl_command(update: Update, context: ContextTypes.DEFAULT_
     if not update.message or not update.message.from_user:
         return
 
-    if payments_blocked_for(update.message.from_user.id):
-        await update.message.reply_text(PAYMENT_MAINTENANCE_MESSAGE, parse_mode=ParseMode.HTML)
-        return
-
     # Force to DM — never process withdrawals in group chats
     if update.message.chat.type in ("group", "supergroup"):
         bot_username = (await context.bot.get_me()).username
@@ -12454,71 +12463,26 @@ async def cryptowithdrawl_command(update: Update, context: ContextTypes.DEFAULT_
 
     user_id = str(update.message.from_user.id)
     user_currency = get_user_currency(user_id)
-    username = update.message.from_user.username or update.message.from_user.first_name or "Player"
     balance = get_user_balance(user_id)
 
-    # Check wagering requirements
-    remaining_requirement = get_wagering_requirement_remaining(user_id)
-
-    if remaining_requirement > 0:
-        await update.message.reply_text(
-            f"❌ <b>WITHDRAWAL BLOCKED</b>\n\n"
-            f"You must wager {format_balance_in_currency(remaining_requirement, user_currency)} more before withdrawing\n"
-            f"(minimum $15 wager required)\n\n"
-            f"Play games with multiplier ✅ 1.70 to reduce requirements",
-            parse_mode=ParseMode.HTML
-        )
-        return
-
-    if balance < MIN_WITHDRAWAL:
-        await update.message.reply_text(
-            f"❌ <b>INSUFFICIENT BALANCE</b>\n\n"
-            f"Minimum withdrawal: {format_balance_in_currency(MIN_WITHDRAWAL, get_user_currency(user_id))}\n"
-            f"Your balance: {format_balance_in_currency(balance, user_currency)}",
-            parse_mode=ParseMode.HTML
-        )
-        return
-
-    # Create currency selection keyboard for withdrawal
     keyboard = []
-    currencies_per_row = 3
-    currency_list = list(SUPPORTED_CRYPTOCURRENCIES.keys())
-
-    for i in range(0, len(currency_list), currencies_per_row):
+    for i in range(0, len(WITHDRAWAL_OPTIONS), 2):
         row = []
-        for j in range(i, min(i + currencies_per_row, len(currency_list))):
-            currency = currency_list[j]
-            currency_info = SUPPORTED_CRYPTOCURRENCIES[currency]
-            house_balance = get_crypto_house_balance(currency)
-            button_text = f"{currency} ({currency_info['name'][:8]})"
-            if house_balance > 0:
-                row.append(InlineKeyboardButton(button_text, callback_data=f"crypto_withdraw_{currency}"))
-            else:
-                row.append(InlineKeyboardButton(f"❌ {currency}", callback_data="insufficient_crypto"))
+        for j in range(2):
+            if i + j < len(WITHDRAWAL_OPTIONS):
+                display_name, np_code = WITHDRAWAL_OPTIONS[i + j]
+                row.append(InlineKeyboardButton(display_name, callback_data=f"np_withdraw_{np_code}"))
         keyboard.append(row)
-
-    keyboard.append([InlineKeyboardButton("🔥 Back to Menu", callback_data="back_to_main")])
+    keyboard.append([InlineKeyboardButton("🎁 Telegram Premium", callback_data="premium_withdraw_menu")])
+    keyboard.append([InlineKeyboardButton("🔥 Back to Menu", callback_data="back_to_menu")])
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # Show crypto house balances
-    house_info = "🏦 <b>Available for Withdrawal:</b>\n"
-    for currency, balance_crypto in crypto_house_balances.items():
-        if balance_crypto > 0:
-            usd_value = convert_crypto_to_usd(currency, balance_crypto)
-            house_info += f"✅ {currency}: {balance_crypto:.6f} (✅{format_balance_in_currency(usd_value, user_currency)})\n"
-
     withdrawal_message = (
-        f"💸 *CRYPTOCURRENCY WITHDRAWALS* 💸\n\n"
-        f"👤 Player: {username}\n"
-        f"Balance: <b>{format_balance_in_currency(balance, user_currency)}</b>\n"
-        f"💵 Min Withdrawal: {format_balance_in_currency(MIN_WITHDRAWAL, get_user_currency(user_id))}\n\n"
-        f"{house_info}\n"
-        f"❌ *Features:*\n"
-        f"▪️ Real blockchain transactions\n"
-        f"▪️ Transaction hash provided\n"
-        f"▪️ Multi-network support\n"
-        f"▪️ Quick processing\n\n"
-        f"📤 Select cryptocurrency for withdrawal:"
+        f"💸 <b>Withdraw</b>\n\n"
+        f"Your current balance: <b>{format_balance_in_currency(balance, user_currency)}</b>\n\n"
+        f"Choose a coin or Telegram Premium.\n"
+        f"Minimum crypto request: <b>${MIN_WITHDRAWAL:.2f}</b>\n\n"
+        f"Crypto requests go to the owner for review. Rejected requests are refunded."
     )
 
     await update.message.reply_text(withdrawal_message, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
@@ -12673,6 +12637,9 @@ async def handle_nowpayments_deposit(query, context: ContextTypes.DEFAULT_TYPE, 
 async def handle_nowpayments_withdrawal(query, context: ContextTypes.DEFAULT_TYPE, np_code: str) -> None:
     """Handle NOWPayments withdrawal - set up state for amount and address entry."""
     user_id = str(query.from_user.id)
+    if not any(code == np_code for _, code in WITHDRAWAL_OPTIONS):
+        await query.answer("That coin is not supported for withdrawal.", show_alert=True)
+        return
 
     # Withdrawal must be done in DM — if triggered from a group, redirect
     if query.message and query.message.chat and query.message.chat.type != 'private':
@@ -12698,47 +12665,12 @@ async def handle_nowpayments_withdrawal(query, context: ContextTypes.DEFAULT_TYP
     user_currency = get_user_currency(user_id)
     balance = get_user_balance(user_id)
 
-    # ── Play-only balance gate ────────────────────────────────────────────────
-    # Only real depositors and tip recipients may submit withdrawal requests.
-    _has_deposit = bool(player_data.get(user_id, {}).get('deposited'))
-    _is_tip_recipient = bool(user_tip_received.get(user_id))
-    if not _has_deposit and not _is_tip_recipient:
-        keyboard = [[InlineKeyboardButton("⬅️ Back", callback_data="back_to_menu")]]
-        await query.edit_message_text(
-            "⚠️ <b>Withdrawable Balance Unavailable</b>\n\n"
-            "Only deposited funds and eligible tipped deposited balances can be withdrawn.\n"
-            "Bonus or promotional balances may require wagering before withdrawal.\n\n"
-            "Make a real deposit to unlock withdrawals.",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode=ParseMode.HTML
-        )
-        return
-    # ─────────────────────────────────────────────────────────────────────────
-
     # Find display name for this currency
     display_name = np_code.upper()
     for name, code in WITHDRAWAL_OPTIONS:
         if code == np_code:
             display_name = name
             break
-
-    # Check wagering requirements.
-    # Tip recipients bypass entirely — tipped deposited funds are instantly withdrawable
-    # with no wagering requirement, per casino policy.
-    remaining_requirement = get_wagering_requirement_remaining(user_id)
-
-    if remaining_requirement > 0 and not _is_tip_recipient:
-        _back_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="back_to_menu")]])
-        await query.edit_message_text(
-            "⚠️ <b>Withdrawable Balance Unavailable</b>\n\n"
-            "Only deposited funds and eligible tipped deposited balances can be withdrawn. "
-            "Bonus or promotional balances may require wagering before withdrawal.\n\n"
-            f"📊 Wagering remaining: <b>{format_balance_in_currency(remaining_requirement, user_currency)}</b>\n\n"
-            "Play games to fulfill the requirement and unlock your withdrawal.",
-            reply_markup=_back_kb,
-            parse_mode=ParseMode.HTML
-        )
-        return
 
     if balance < MIN_WITHDRAWAL:
         _min_kb = InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="back_to_menu")]])
@@ -12763,7 +12695,8 @@ async def handle_nowpayments_withdrawal(query, context: ContextTypes.DEFAULT_TYP
         f"💸 <b>{display_name} Withdrawal</b>\n\n"
         f"Your Balance: <b>{format_balance_in_currency(balance, user_currency)}</b>\n"
         f"Minimum: <b>${min_usd:.2f}</b>\n\n"
-        f"Send how much USD you want to withdraw, or tap <b>Withdraw All</b> below:"
+        f"Send how much USD you want to withdraw, or tap <b>Withdraw All</b> below.\n"
+        f"Requests are reviewed by the owner; rejected requests are refunded."
     )
 
     # Check for a saved address for this coin to inform the user
@@ -12802,6 +12735,9 @@ async def handle_np_withdrawal_amount(update: Update, context: ContextTypes.DEFA
 
     try:
         amount_usd = float(update.message.text.strip().replace('$', '').replace(',', ''))
+        if not math.isfinite(amount_usd):
+            await update.message.reply_text("Please enter a finite amount.")
+            return
         min_usd = MIN_WITHDRAWAL
         
         if amount_usd < min_usd:
@@ -12814,24 +12750,6 @@ async def handle_np_withdrawal_amount(update: Update, context: ContextTypes.DEFA
             await update.message.reply_text(f"Insufficient balance! You have {format_balance_in_currency(user_balance, user_currency)}")
             return
 
-        # Enforce wagering / tip-restriction / minimum-withdrawal rules
-        allowed, reason = can_withdraw(user_id, amount_usd)
-        if not allowed:
-            # Use professional message for wagering/eligibility blocks;
-            # keep raw reason only for simple balance/amount errors.
-            if "wager" in reason.lower() or "withdraw" in reason.lower():
-                _rem = get_wagering_requirement_remaining(user_id)
-                _wager_line = f"\n\n📊 Wagering remaining: <b>{format_balance_in_currency(_rem, get_user_currency(user_id))}</b>" if _rem > 0 else ""
-                await update.message.reply_text(
-                    "⚠️ <b>Withdrawable Balance Unavailable</b>\n\n"
-                    "Only deposited funds and eligible tipped deposited balances can be withdrawn. "
-                    "Bonus or promotional balances may require wagering before withdrawal."
-                    + _wager_line,
-                    parse_mode=ParseMode.HTML
-                )
-            else:
-                await update.message.reply_text(f"❌ {reason}")
-            return
     except ValueError:
         await update.message.reply_text("Please enter a valid number. Example: 10")
         return
@@ -12871,6 +12789,11 @@ async def handle_np_withdrawal_amount(update: Update, context: ContextTypes.DEFA
         f"Amount: <b>${amount_usd:.2f}</b>\n\n"
         f"Please paste your <b>{display_name}</b> wallet address below:"
     )
+    if np_crypto in ("xrp", "xlm"):
+        addr_msg += (
+            "\n\nIf your wallet or exchange requires a destination tag/memo, "
+            "include it after the address separated by a colon."
+        )
     if _np_amt_saved:
         addr_msg += f"\n\n💾 Or tap <b>Use saved</b> to use your previously saved address."
     addr_msg += "\n\n⚠️ <b>Wrong address = lost funds!</b>"
@@ -12901,7 +12824,7 @@ async def _process_np_withdrawal_direct(context, user_id: str, np_crypto: str, a
         return
     save_data_critical()
 
-    withdrawal_id = f"npw_{user_id}_{int(time.time())}"
+    withdrawal_id = f"npw_{user_id}_{int(time.time())}_{uuid.uuid4().hex[:6]}"
     pending_withdrawals[withdrawal_id] = {
         'user_id': user_id,
         'username': username,
@@ -12915,57 +12838,19 @@ async def _process_np_withdrawal_direct(context, user_id: str, np_crypto: str, a
     }
     save_data_critical()
 
-    try:
-        if PLISIO_SECRET_KEY:
-            payout_result, payout_error = plisio_create_payout(
-                address=wallet_address,
-                currency=np_crypto.lower(),
-                amount_usd=amount_usd,
-                withdrawal_id=withdrawal_id
-            )
-            if payout_result and not payout_error:
-                payout_id = payout_result.get('txn_id') or payout_result.get('id', withdrawal_id)
-                pending_withdrawals[withdrawal_id]['status'] = 'processing'
-                pending_withdrawals[withdrawal_id]['payout_id'] = payout_id
-                save_data_critical()
-                try:
-                    await context.bot.send_message(
-                        chat_id=user_id,
-                        text=(
-                            f"<tg-emoji emoji-id=\"5368324170671202286\">💸</tg-emoji> <b>Withdrawal Processing</b>\n\n"
-                            f"Amount: <b>${amount_usd:.2f}</b> ({display_name})\n"
-                            f"Address: <code>{wallet_address}</code>\n"
-                            f"Transaction ID: <code>{payout_id}</code>\n\n"
-                            f"Your funds are on the way! You'll be notified once confirmed on-chain."
-                        ),
-                        parse_mode=ParseMode.HTML
-                    )
-                except Exception:
-                    pass
-                if OWNER_ID:
-                    try:
-                        await context.bot.send_message(
-                            chat_id=OWNER_ID,
-                            text=f"🔄 <b>PLISIO AUTO WITHDRAWAL</b>\n\nID: <code>{withdrawal_id}</code>\nUser: {username} (ID: {user_id})\nCurrency: {display_name}\nAmount: ${amount_usd:.2f}\nAddress: <code>{wallet_address}</code>\nTXN ID: <code>{payout_id}</code>",
-                            parse_mode=ParseMode.HTML
-                        )
-                    except Exception:
-                        pass
-                return
-            else:
-                logger.warning(f"[Plisio] Payout failed in direct flow: {payout_error}")
-    except Exception as e:
-        logger.error(f"[Plisio] Payout error in direct flow: {e}")
-
-    # Manual fallback
+    # Keep every request pending for owner review; do not call payout providers
+    # from a user's address-submission flow.
+    safe_display_name = _html.escape(str(display_name))
+    safe_wallet_address = _html.escape(str(wallet_address))
+    safe_username = _html.escape(str(username))
     try:
         await context.bot.send_message(
             chat_id=user_id,
             text=(
                 f"⏳ <b>Withdrawal Submitted</b>\n\n"
-                f"Amount: ${amount_usd:.2f} ({display_name})\n"
-                f"Address: <code>{wallet_address}</code>\n\n"
-                f"You will be notified once it's processed."
+                f"Amount: ${amount_usd:.2f} ({safe_display_name})\n"
+                f"Address: <code>{safe_wallet_address}</code>\n\n"
+                f"Your request is waiting for owner review. If rejected, the amount is refunded."
             ),
             parse_mode=ParseMode.HTML
         )
@@ -12979,12 +12864,30 @@ async def _process_np_withdrawal_direct(context, user_id: str, np_crypto: str, a
         try:
             await context.bot.send_message(
                 chat_id=OWNER_ID,
-                text=f"📤 <b>NEW WITHDRAWAL REQUEST</b>\n\nID: <code>{withdrawal_id}</code>\nUser: {username} (ID: {user_id})\nCurrency: {display_name}\nAmount: ${amount_usd:.2f}\nAddress: <code>{wallet_address}</code>",
+                text=(
+                    f"📤 <b>NEW WITHDRAWAL REQUEST</b>\n\n"
+                    f"ID: <code>{withdrawal_id}</code>\n"
+                    f"User: {safe_username} (ID: {user_id})\n"
+                    f"Currency: {safe_display_name}\n"
+                    f"Amount: ${amount_usd:.2f}\n"
+                    f"Address: <code>{safe_wallet_address}</code>\n\n"
+                    "Send the payout manually before approving. Rejecting refunds the player."
+                ),
                 parse_mode=ParseMode.HTML,
                 reply_markup=kb
             )
         except Exception as e:
+            pending_withdrawals.pop(withdrawal_id, None)
+            ultra_secure_add_user_balance(user_id, amount_usd, "withdrawal_owner_notify_refund")
+            save_data_critical()
             logger.error(f"Error notifying owner: {e}")
+            try:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text="The owner could not be notified, so your balance was refunded.",
+                )
+            except Exception:
+                pass
 
 async def handle_np_withdrawal_address(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle user entering NOWPayments withdrawal address - submit for manual owner approval."""
@@ -13003,9 +12906,9 @@ async def handle_np_withdrawal_address(update: Update, context: ContextTypes.DEF
 
     try:
         np_crypto = user_states.get(f"{user_id}_np_crypto")
-        amount_usd = user_states.get(f"{user_id}_np_amount_usd")
+        amount_usd = float(user_states.get(f"{user_id}_np_amount_usd", 0) or 0)
 
-        if not np_crypto or not amount_usd:
+        if not np_crypto or not math.isfinite(amount_usd) or amount_usd < MIN_WITHDRAWAL:
             await update.message.reply_text("Session expired. Please start withdrawal again.")
             user_states[user_id] = UserState.NONE
             return
@@ -13023,26 +12926,6 @@ async def handle_np_withdrawal_address(update: Update, context: ContextTypes.DEF
         if amount_usd > user_balance:
             await update.message.reply_text("❌ Insufficient balance!")
             user_states[user_id] = UserState.NONE
-            return
-
-        # Re-check wagering / tip-restriction / minimum-withdrawal rules at submission
-        allowed, reason = can_withdraw(user_id, amount_usd)
-        if not allowed:
-            if "wager" in reason.lower() or "withdraw" in reason.lower():
-                _rem2 = get_wagering_requirement_remaining(user_id)
-                _wl2 = f"\n\n📊 Wagering remaining: <b>{format_balance_in_currency(_rem2, get_user_currency(user_id))}</b>" if _rem2 > 0 else ""
-                await update.message.reply_text(
-                    "⚠️ <b>Withdrawable Balance Unavailable</b>\n\n"
-                    "Only deposited funds and eligible tipped deposited balances can be withdrawn. "
-                    "Bonus or promotional balances may require wagering before withdrawal."
-                    + _wl2,
-                    parse_mode=ParseMode.HTML
-                )
-            else:
-                await update.message.reply_text(f"❌ {reason}")
-            user_states[user_id] = UserState.NONE
-            user_states.pop(f"{user_id}_np_crypto", None)
-            user_states.pop(f"{user_id}_np_amount_usd", None)
             return
 
         # Deduct balance immediately — use withdrawal-typed path to bypass bet debounce
@@ -13067,7 +12950,7 @@ async def handle_np_withdrawal_address(update: Update, context: ContextTypes.DEF
                 break
 
         # Create withdrawal request
-        withdrawal_id = f"npw_{user_id}_{int(time.time())}"
+        withdrawal_id = f"npw_{user_id}_{int(time.time())}_{uuid.uuid4().hex[:6]}"
 
         pending_withdrawals[withdrawal_id] = {
             'user_id': user_id,
@@ -13087,62 +12970,15 @@ async def handle_np_withdrawal_address(update: Update, context: ContextTypes.DEF
         user_states.pop(f"{user_id}_np_crypto", None)
         user_states.pop(f"{user_id}_np_amount_usd", None)
 
-        try:
-            if PLISIO_SECRET_KEY:
-                # Create payout via Plisio
-                payout_result, payout_error = plisio_create_payout(
-                    address=wallet_address,
-                    currency=np_crypto.lower(),
-                    amount_usd=amount_usd,
-                    withdrawal_id=withdrawal_id
-                )
-
-                if payout_result and not payout_error:
-                    # Payout created successfully
-                    payout_id = payout_result.get('txn_id') or payout_result.get('id', withdrawal_id)
-                    pending_withdrawals[withdrawal_id]['status'] = 'processing'
-                    pending_withdrawals[withdrawal_id]['payout_id'] = payout_id
-                    save_data_critical()
-
-                    await update.message.reply_text(
-                        f"<tg-emoji emoji-id=\"5368324170671202286\">💸</tg-emoji> <b>Withdrawal Processing</b>\n\n"
-                        f"Amount: <b>${amount_usd:.2f}</b> ({display_name})\n"
-                        f"Address: <code>{wallet_address}</code>\n"
-                        f"Transaction ID: <code>{payout_id}</code>\n\n"
-                        f"Your funds are on the way! You'll be notified once confirmed on-chain.",
-                        parse_mode=ParseMode.HTML
-                    )
-
-                    # Notify owner
-                    if OWNER_ID:
-                        try:
-                            await context.bot.send_message(
-                                chat_id=OWNER_ID,
-                                text=f"🔄 <b>PLISIO AUTO WITHDRAWAL</b>\n\n"
-                                     f"ID: <code>{withdrawal_id}</code>\n"
-                                     f"User: {username} (@{telegram_username}) | ID: <code>{user_id}</code>\n"
-                                     f"Coin: {display_name}\n"
-                                     f"Amount: ${amount_usd:.2f}\n"
-                                     f"Address: <code>{wallet_address}</code>\n"
-                                     f"TXN ID: <code>{payout_id}</code>\n\n"
-                                     f"✅ Processed automatically via Plisio",
-                                parse_mode=ParseMode.HTML
-                            )
-                        except Exception:
-                            pass
-                    return
-                else:
-                    # Plisio payout failed, fall back to manual approval
-                    logger.warning(f"[Plisio] Payout failed: {payout_error}")
-        except Exception as e:
-            logger.error(f"[Plisio] Withdrawal error: {e}")
-
-        # Fall back to manual approval if auto crypto is disabled or failed
+        safe_username = _html.escape(str(username))
+        safe_telegram_username = _html.escape(str(telegram_username))
+        safe_display_name = _html.escape(str(display_name))
+        safe_wallet_address = _html.escape(wallet_address)
         await update.message.reply_text(
             f"⏳ <b>Withdrawal Submitted</b>\n\n"
-            f"Amount: <b>${amount_usd:.2f}</b> ({display_name})\n"
-            f"Address: <code>{wallet_address}</code>\n\n"
-            f"You will be notified once it's sent.",
+            f"Amount: <b>${amount_usd:.2f}</b> ({safe_display_name})\n"
+            f"Address: <code>{safe_wallet_address}</code>\n\n"
+            f"Your request is waiting for owner review. If rejected, the amount is refunded.",
             parse_mode=ParseMode.HTML
         )
 
@@ -13159,91 +12995,52 @@ async def handle_np_withdrawal_address(update: Update, context: ContextTypes.DEF
                     chat_id=OWNER_ID,
                     text=f"📤 <b>NEW WITHDRAWAL REQUEST</b>\n\n"
                          f"ID: <code>{withdrawal_id}</code>\n"
-                         f"User: {username} (@{telegram_username}) | ID: <code>{user_id}</code>\n"
-                         f"Coin: {display_name}\n"
+                         f"User: {safe_username} (@{safe_telegram_username}) | ID: <code>{user_id}</code>\n"
+                         f"Coin: {safe_display_name}\n"
                          f"Amount: <b>${amount_usd:.2f}</b>\n"
-                         f"Address: <code>{wallet_address}</code>\n\n"
-                         f"Approve or reject below:",
+                         f"Address: <code>{safe_wallet_address}</code>\n\n"
+                         "Send the payout manually before approving. Rejecting refunds the player.",
                     parse_mode=ParseMode.HTML,
                     reply_markup=reply_markup
                 )
             except Exception as e:
+                pending_withdrawals.pop(withdrawal_id, None)
+                ultra_secure_add_user_balance(user_id, amount_usd, "withdrawal_owner_notify_refund")
+                save_data_critical()
                 logger.error(f"Error notifying owner: {e}")
+                try:
+                    await update.message.reply_text(
+                        "The owner could not be notified, so your balance was refunded."
+                    )
+                except Exception:
+                    pass
     finally:
         _processing_np_withdrawals.discard(user_id)
 
 async def handle_crypto_withdrawals_menu(query, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle crypto withdrawals menu from main menu."""
+    """Show the coin and Telegram Premium withdrawal request menu."""
     user_id = str(query.from_user.id)
     user_currency = get_user_currency(user_id)
-    username = query.from_user.username or query.from_user.first_name or "Player"
     balance = get_user_balance(user_id)
 
-    # Check wagering requirements
-    remaining_requirement = get_wagering_requirement_remaining(user_id)
-
-    if remaining_requirement > 0:
-        keyboard = [
-            [InlineKeyboardButton("🎁 Telegram Premium", callback_data="premium_withdraw_menu")],
-            [InlineKeyboardButton("🔥 Back to Menu", callback_data="back_to_menu")],
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        await _edit_callback_text_or_send(
-            query,
-            context,
-            f"❌ <b>WITHDRAWAL BLOCKED</b>\n\n"
-            f"You must wager {format_balance_in_currency(remaining_requirement, user_currency)} more before withdrawing\n"
-            f"(minimum $15 wager required)\n\n"
-            f"Play games with multiplier ✅ 1.70 to reduce requirements",
-            reply_markup=reply_markup,
-            parse_mode=ParseMode.HTML
-        )
-        return
-
-    if balance < MIN_WITHDRAWAL:
-        keyboard = [
-            [InlineKeyboardButton("🎁 Telegram Premium", callback_data="premium_withdraw_menu")],
-            [InlineKeyboardButton("🔥 Back to Menu", callback_data="back_to_menu")],
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        await _edit_callback_text_or_send(
-            query,
-            context,
-            f"❌ <b>INSUFFICIENT BALANCE</b>\n\n"
-            f"Minimum withdrawal: {format_balance_in_currency(MIN_WITHDRAWAL, get_user_currency(user_id))}\n"
-            f"Your balance: {format_balance_in_currency(balance, user_currency)}",
-            reply_markup=reply_markup,
-            parse_mode=ParseMode.HTML
-        )
-        return
-
-    # Main withdrawal coins shown in 2-column layout matching the UI
-    WITHDRAW_COINS = [
-        ("Litecoin (LTC)", "LTC"),
-        ("Ethereum (ETH)", "ETH"),
-        ("Toncoin (TON)", "TON"),
-        ("Solana (SOL)", "SOL"),
-    ]
     keyboard = []
-    for i in range(0, len(WITHDRAW_COINS), 2):
+    for i in range(0, len(WITHDRAWAL_OPTIONS), 2):
         row = []
-        row.append(InlineKeyboardButton(WITHDRAW_COINS[i][0], callback_data=f"crypto_withdraw_{WITHDRAW_COINS[i][1]}"))
-        if i + 1 < len(WITHDRAW_COINS):
-            row.append(InlineKeyboardButton(WITHDRAW_COINS[i+1][0], callback_data=f"crypto_withdraw_{WITHDRAW_COINS[i+1][1]}"))
+        for j in range(2):
+            if i + j < len(WITHDRAWAL_OPTIONS):
+                display_name, np_code = WITHDRAWAL_OPTIONS[i + j]
+                row.append(InlineKeyboardButton(display_name, callback_data=f"np_withdraw_{np_code}"))
         keyboard.append(row)
-    keyboard.append([InlineKeyboardButton("USDT (ERC20)", callback_data="crypto_withdraw_USDT")])
     keyboard.append([InlineKeyboardButton("🎁 Telegram Premium", callback_data="premium_withdraw_menu")])
-    keyboard.append([InlineKeyboardButton("💸 CC Tip Withdrawal", callback_data="cctip_menu")])
     keyboard.append([InlineKeyboardButton("⬅️ BACK", callback_data="back_to_menu")])
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     withdrawal_message = (
         f"💸 <b>Withdraw</b>\n\n"
         f"Your current balance: <b>{format_balance_in_currency(balance, user_currency)}</b>\n\n"
-        f"Choose the cryptocurrency you want to withdraw into:\n\n"
-        f"💡 <b>CC Tip Withdrawal</b> — instant withdrawal via CC tip to your Telegram account"
+        f"Choose a coin or Telegram Premium.\n"
+        f"Minimum crypto request: <b>${MIN_WITHDRAWAL:.2f}</b>\n\n"
+        f"Crypto requests go to the owner for review. Rejected requests are refunded."
     )
 
     await _edit_callback_text_or_send(
@@ -13721,33 +13518,6 @@ async def handle_crypto_withdrawal_selection(query, context: ContextTypes.DEFAUL
         await query.edit_message_text("Cryptocurrency not supported")
         return
 
-    # ── Eligibility gate (same rules as handle_nowpayments_withdrawal) ────────
-    _cs_has_dep = bool(player_data.get(user_id, {}).get('deposited'))
-    _cs_is_tip  = bool(user_tip_received.get(user_id))
-    if not _cs_has_dep and not _cs_is_tip:
-        await query.edit_message_text(
-            "⚠️ <b>Withdrawable Balance Unavailable</b>\n\n"
-            "Only deposited funds and eligible tipped deposited balances can be withdrawn.\n"
-            "Bonus or promotional balances may require wagering before withdrawal.\n\n"
-            "Make a real deposit to unlock withdrawals.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="back_to_menu")]]),
-            parse_mode=ParseMode.HTML
-        )
-        return
-    _cs_wager = get_wagering_requirement_remaining(user_id)
-    if _cs_wager > 0 and not _cs_is_tip:
-        await query.edit_message_text(
-            "⚠️ <b>Withdrawable Balance Unavailable</b>\n\n"
-            "Only deposited funds and eligible tipped deposited balances can be withdrawn. "
-            "Bonus or promotional balances may require wagering before withdrawal.\n\n"
-            f"📊 Wagering remaining: <b>{format_balance_in_currency(_cs_wager, user_currency)}</b>\n\n"
-            "Play games to fulfill the requirement and unlock your withdrawal.",
-            reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="back_to_menu")]]),
-            parse_mode=ParseMode.HTML
-        )
-        return
-    # ─────────────────────────────────────────────────────────────────────────
-
     crypto_info = SUPPORTED_CRYPTOCURRENCIES[crypto]
     user_balance = get_user_balance(user_id)
     
@@ -13798,7 +13568,7 @@ async def handle_crypto_withdrawal_selection(query, context: ContextTypes.DEFAUL
             f"Min Withdrawal: ${MIN_WITHDRAWAL:.2f}\n\n"
             f"*Enter withdrawal amount in USD:*\n"
             f"Example: 10\n\n"
-            f"Your withdrawal will be processed automatically.\n"
+            f"Your request will be sent to the owner for review.\n"
             f"Or tap <b>Withdraw All</b> below.",
             parse_mode=ParseMode.HTML,
             reply_markup=_wa_kb1
@@ -13836,7 +13606,7 @@ async def handle_crypto_network_withdrawal_selection(query, context: ContextType
         f"Min Withdrawal: ${MIN_WITHDRAWAL:.2f}\n\n"
         f"*Enter withdrawal amount in USD:*\n"
         f"Example: 10\n\n"
-        f"Your withdrawal will be processed automatically.\n"
+        f"Your request will be sent to the owner for review.\n"
         f"Or tap <b>Withdraw All</b> below.",
         parse_mode=ParseMode.HTML,
         reply_markup=_wa_kb2
@@ -13866,6 +13636,9 @@ async def handle_crypto_withdrawal_amount(update: Update, context: ContextTypes.
     # Parse the amount in USD
     try:
         amount_usd = float(update.message.text.strip().replace('$', '').replace(',', ''))
+        if not math.isfinite(amount_usd):
+            await update.message.reply_text("Please enter a finite amount.")
+            return
         if amount_usd < MIN_WITHDRAW_USD:
             await update.message.reply_text(f"Minimum withdrawal is ${MIN_WITHDRAW_USD}")
             return
@@ -13914,7 +13687,7 @@ async def handle_crypto_withdrawal_amount(update: Update, context: ContextTypes.
     logger.info(f"Withdrawal: User {user_id} entered ${amount_usd}, now waiting for {crypto} address")
 
 async def handle_crypto_withdrawal_address(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle user entering withdrawal address - process via NOWPayments automatically."""
+    """Record a crypto withdrawal request for manual owner review."""
     if not update.message or not update.message.from_user or not update.message.text:
         return
 
@@ -13922,13 +13695,12 @@ async def handle_crypto_withdrawal_address(update: Update, context: ContextTypes
     user_currency = get_user_currency(user_id)
     username = update.message.from_user.username or update.message.from_user.first_name or "Player"
 
-    # Check if user is in the right state
     if user_states.get(user_id) != UserState.CRYPTO_WITHDRAWAL_ADDRESS:
         return
 
     crypto = user_states.get(f"{user_id}_crypto")
     network = user_states.get(f"{user_id}_network", "auto")
-    amount_usd = user_states.get(f"{user_id}_amount_usd", 0)  # Corrected key
+    amount_usd = float(user_states.get(f"{user_id}_amount_usd", 0) or 0)
 
     if not crypto or not amount_usd:
         await update.message.reply_text("Session expired. Please start withdrawal process again.")
@@ -13936,110 +13708,97 @@ async def handle_crypto_withdrawal_address(update: Update, context: ContextTypes
         save_data()
         return
 
-    withdrawal_address = update.message.text.strip()
-    crypto_info = SUPPORTED_CRYPTOCURRENCIES[crypto]
-    
-    # Get the correct NOWPayments code based on selected network
-    if network != "auto" and crypto in NOWPAYMENTS_CURRENCY_MAP and network in NOWPAYMENTS_CURRENCY_MAP[crypto]:
-        nowpayments_code = NOWPAYMENTS_CURRENCY_MAP[crypto][network]
-    else:
-        nowpayments_code = crypto_info.get('nowpayments_code', crypto.lower())
-    
-    network_name = NETWORK_INFO.get(network, network) if network != "auto" else "Auto-detect"
-
-    # Deduct balance from user — use withdrawal-typed path to bypass bet debounce
-    if not ultra_secure_deduct_user_balance(user_id, amount_usd, "withdrawal"):
-        await update.message.reply_text("❌ Insufficient balance or deduction failed. Please try again.")
+    if crypto not in SUPPORTED_CRYPTOCURRENCIES:
+        await update.message.reply_text("That coin is no longer supported. Please start again.")
         user_states[user_id] = UserState.NONE
         save_data()
         return
 
-    # Generate unique withdrawal ID
-    withdrawal_id = f"W{user_id}_{int(time.time())}"
-
-    # Send processing message
-    processing_msg = await update.message.reply_text(
-        f"*Processing Withdrawal...*\n\n"
-        f"Crypto: {crypto_info['name']}\n"
-        f"Amount: ${amount_usd:.2f}\n"
-        f"Address: `{withdrawal_address}`\n\n"
-        f"Processing your withdrawal automatically via NOWPayments...",
-        parse_mode=ParseMode.HTML
-    )
-
-    # Create payout via Plisio (USD amount sent directly — no estimate step needed)
-    payout_result, payout_error = plisio_create_payout(
-        address=withdrawal_address,
-        currency=nowpayments_code,
-        amount_usd=amount_usd,
-        withdrawal_id=withdrawal_id
-    )
-
-    if payout_error or not payout_result:
-        # Refund user if payout fails
-        ultra_secure_add_user_balance(user_id, amount_usd, "withdrawal_payout_refund")
-        user_states[user_id] = UserState.NONE
-        save_data_critical()
-        error_msg = payout_error or "Unknown error"
-        await processing_msg.edit_text(
-            f"*Withdrawal Failed*\n\n"
-            f"Payout error: {error_msg}\n"
-            f"Your balance has been refunded.",
-            parse_mode=ParseMode.HTML
-        )
-        logger.error(f"[Plisio] Crypto withdrawal failed for {user_id}: {error_msg}")
+    withdrawal_address = update.message.text.strip()
+    if len(withdrawal_address) < 10:
+        await update.message.reply_text("Please enter a valid wallet address.")
         return
 
-    # Store successful withdrawal for tracking (Plisio-based)
-    payout_id = payout_result.get('txn_id') or payout_result.get('id', withdrawal_id)
-    nowpayments_pending_withdrawals[withdrawal_id] = {
+    crypto_info = SUPPORTED_CRYPTOCURRENCIES[crypto]
+    network_name = NETWORK_INFO.get(network, network) if network != "auto" else "Auto-detect"
+    user_balance = get_user_balance(user_id)
+    if amount_usd > user_balance:
+        await update.message.reply_text("Insufficient balance. Please start the request again.")
+        user_states[user_id] = UserState.NONE
+        save_data()
+        return
+
+    if not ultra_secure_deduct_user_balance(user_id, amount_usd, "withdrawal"):
+        await update.message.reply_text("❌ Insufficient balance or deduction failed. Please try again.")
+        user_states[user_id] = UserState.NONE
+        save_data_critical()
+        return
+
+    withdrawal_id = f"cw_{user_id}_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+    pending_crypto_withdrawals[withdrawal_id] = {
         'user_id': user_id,
         'username': username,
         'crypto': crypto,
-        'nowpayments_code': nowpayments_code,
+        'network': network,
+        'network_name': network_name,
         'amount_usd': amount_usd,
         'address': withdrawal_address,
-        'payout_id': payout_id,
-        'status': 'processing',
-        'timestamp': int(time.time())
+        'status': 'pending',
+        'created_at': time.time(),
     }
-
-    # Auto-save withdrawal address for future use
-    _save_key = f"{crypto}_{network}"
     if user_id not in user_saved_withdrawal_addresses:
         user_saved_withdrawal_addresses[user_id] = {}
-    user_saved_withdrawal_addresses[user_id][_save_key] = withdrawal_address
-
-    # Reset user state
+    user_saved_withdrawal_addresses[user_id][f"{crypto}_{network}"] = withdrawal_address
     user_states[user_id] = UserState.NONE
-    save_data()
+    for state_key in (
+        f"{user_id}_crypto",
+        f"{user_id}_network",
+        f"{user_id}_amount_usd",
+    ):
+        user_states.pop(state_key, None)
+    save_data_critical()
 
-    # Notify user of successful submission
-    await processing_msg.edit_text(
-        f"<tg-emoji emoji-id=\"5368324170671202286\">💸</tg-emoji> <b>Withdrawal Processing</b>\n\n"
-        f"Crypto: {crypto_info['name']}\n"
-        f"Amount: <b>${amount_usd:.2f}</b>\n"
-        f"Address: <code>{withdrawal_address}</code>\n"
-        f"Transaction ID: <code>{payout_id}</code>\n\n"
-        f"Your funds are on the way! You'll be notified once confirmed on-chain.",
-        parse_mode=ParseMode.HTML
-    )
-
-    # Log for owner (info only, no action needed)
+    display_name = _html.escape(crypto_info["name"])
+    safe_username = _html.escape(str(username))
+    safe_address = _html.escape(withdrawal_address)
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Approve", callback_data=f"approve_crypto_withdrawal_{withdrawal_id}"),
+        InlineKeyboardButton("❌ Reject", callback_data=f"reject_crypto_withdrawal_{withdrawal_id}"),
+    ]])
     try:
         await context.bot.send_message(
             chat_id=OWNER_ID,
-            text=f"🔄 <b>PLISIO AUTO WITHDRAWAL PROCESSED</b>\n\n"
-                 f"User: {username} (ID: <code>{user_id}</code>)\n"
-                 f"Crypto: {crypto_info['name']} ({nowpayments_code})\n"
-                 f"Amount: ${amount_usd:.2f}\n"
-                 f"Address: <code>{withdrawal_address}</code>\n"
-                 f"TXN ID: <code>{payout_id}</code>\n\n"
-                 f"✅ Processed automatically via Plisio",
-            parse_mode=ParseMode.HTML
+            text=(
+                "📤 <b>NEW CRYPTO WITHDRAWAL REQUEST</b>\n\n"
+                f"Request: <code>{withdrawal_id}</code>\n"
+                f"Player: {safe_username} (ID: <code>{user_id}</code>)\n"
+                f"Coin: <b>{display_name}</b> · {network_name}\n"
+                f"Amount: <b>${amount_usd:.2f}</b>\n"
+                f"Address: <code>{safe_address}</code>\n\n"
+                "Review the address and send the payout manually before approving."
+            ),
+            parse_mode=ParseMode.HTML,
+            reply_markup=keyboard,
         )
-    except Exception as e:
-        logger.error(f"Error notifying owner: {e}")
+    except Exception as exc:
+        pending_crypto_withdrawals[withdrawal_id]["status"] = "rejected"
+        ultra_secure_add_user_balance(user_id, amount_usd, "withdrawal_owner_notify_refund")
+        save_data_critical()
+        logger.error(f"Could not notify owner for crypto withdrawal {withdrawal_id}: {exc}")
+        await update.message.reply_text(
+            "The owner could not be notified, so your balance was refunded.",
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    await update.message.reply_text(
+        f"⏳ <b>Withdrawal request submitted</b>\n\n"
+        f"Coin: <b>{display_name}</b> · {network_name}\n"
+        f"Amount: <b>${amount_usd:.2f}</b>\n"
+        f"Address: <code>{safe_address}</code>\n\n"
+        "The owner will review it. If rejected, the amount is refunded.",
+        parse_mode=ParseMode.HTML,
+    )
 
 async def handle_owner_approve_crypto_withdrawal(query, context: ContextTypes.DEFAULT_TYPE, withdrawal_id: str) -> None:
     """Handle owner confirming crypto withdrawal payment was sent - notify player."""
@@ -21301,18 +21060,13 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 "crypto_deposit",
                 "crypto_deposits",
                 "np_deposit_",
-                "crypto_withdraw",
-                "np_withdraw",
-                "withdraw_network_",
-                "withdraw_all_",
-                "premium_",
             ))
             or _payment_callback in ("cctip_menu", "deposit_gifts")
         )
         if _payment_callback_blocked:
             try:
                 await query.answer(
-                    "🔧 Deposits and withdrawals are temporarily paused. Please try again later.",
+                    "🔧 Deposits are temporarily paused. Crypto withdrawal requests remain open for owner review.",
                     show_alert=True,
                 )
             except Exception:
@@ -21324,6 +21078,18 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         _maint_passthrough = (
             _data.startswith("owner_") or
             _data in ("back_to_deposit", "settings_menu", "report_stuck_deposit") or
+            _data in ("inr_withdrawals", "crypto_withdrawals") or
+            _data.startswith((
+                "crypto_withdraw",
+                "np_withdraw",
+                "withdraw_network_",
+                "withdraw_all_",
+                "premium_",
+                "np_use_saved_addr_",
+                "np_remove_saved_addr_",
+                "use_saved_addr_",
+                "remove_saved_addr_",
+            )) or
             _data.startswith("settings_") or _data.startswith("back_to_")
         )
         if not _maint_passthrough:
@@ -22127,6 +21893,25 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     elif query.data == "premium_withdraw_menu":
         await query.answer()
+        if query.message and query.message.chat.type != "private":
+            try:
+                bot_info = await context.bot.get_me()
+                bot_username = bot_info.username or "rollersgamebot"
+            except Exception:
+                bot_username = "rollersgamebot"
+            await _edit_callback_text_or_send(
+                query,
+                context,
+                "🎁 Open a private chat with the bot to request Telegram Premium.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton(
+                        "💬 Open bot",
+                        url=f"https://t.me/{bot_username}?start=withdraw",
+                    )
+                ]]),
+                parse_mode=ParseMode.HTML,
+            )
+            return
         await _edit_callback_text_or_send(
             query,
             context,
@@ -28765,29 +28550,17 @@ async def announce_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     await update.message.reply_text(f"✅ Complete!\n✅ Sent: {sent} | ❌ Failed: {failed} | 📊 Total: {total}")
 
 async def autocrypto_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Toggle automatic crypto withdrawals - Owner only."""
-    global auto_crypto_enabled
+    """Explain that all crypto withdrawals are manually reviewed."""
     if not update.message or not update.message.from_user:
         return
     
     if not is_owner_or_manager(update.message.from_user.id):
         await update.message.reply_text("❌ Owner only command.")
         return
-    
-    if not context.args:
-        status = "ON 🟢" if auto_crypto_enabled else "OFF 🔴"
-        await update.message.reply_text(f"Auto crypto withdrawals: {status}\nUsage: /autocrypto [on/off]")
-        return
-    
-    mode = context.args[0].lower()
-    if mode in ['on', 'true', '1']:
-        auto_crypto_enabled = True
-        await update.message.reply_text("🟢 Auto crypto withdrawals ENABLED\nWithdrawals will process automatically via NOWPayments.")
-    elif mode in ['off', 'false', '0']:
-        auto_crypto_enabled = False
-        await update.message.reply_text("🔴 Auto crypto withdrawals DISABLED\nWithdrawals require manual approval.")
-    else:
-        await update.message.reply_text("Usage: /autocrypto [on/off]")
+    await update.message.reply_text(
+        "🔒 Automatic crypto payouts are disabled. "
+        "Every crypto withdrawal goes to the owner for manual review."
+    )
 
 async def setperiodicgiveaway_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Configure periodic group giveaway - Owner only."""
@@ -29146,18 +28919,20 @@ async def handle_owner_panel_callbacks(query, context: ContextTypes.DEFAULT_TYPE
     
     elif data == "owner_toggle_autocrypto":
         global auto_crypto_enabled
-        auto_crypto_enabled = not auto_crypto_enabled
+        auto_crypto_enabled = False
         save_data_critical()
-        status_str = "ON 🟢" if auto_crypto_enabled else "OFF 🔴"
         try:
-            await query.answer(f"Auto Crypto Withdrawals: {status_str}", show_alert=True)
+            await query.answer(
+                "Automatic payouts are disabled. Owner review is required.",
+                show_alert=True,
+            )
         except Exception:
             pass
         data = "owner_settings"  # fall through to re-render settings
 
     if data == "owner_settings":
         maint_lbl = "🔴 Turn OFF Maintenance" if casino_maintenance_mode else "🟢 Turn ON Maintenance"
-        auto_lbl  = "🔴 Disable Auto Crypto"  if auto_crypto_enabled   else "🟢 Enable Auto Crypto"
+        auto_lbl  = "🔒 Automatic Payouts Disabled"
         settings_msg = (
             f"⚙️ <b>CASINO SETTINGS</b>\n\n"
             f"💰 Min Bet: ${MIN_BET}\n"
@@ -29165,7 +28940,7 @@ async def handle_owner_panel_callbacks(query, context: ContextTypes.DEFAULT_TYPE
             f"📥 Min Deposit: ${MIN_DEPOSIT:.2f}\n"
             f"📤 Min Withdrawal: ${MIN_WITHDRAWAL:.2f}\n"
             f"🛠 Maintenance: {'🔴 ON' if casino_maintenance_mode else '🟢 OFF'}\n"
-            f"🔄 Auto Crypto Withdrawals: {'🟢 ON' if auto_crypto_enabled else '🔴 OFF'}\n\n"
+            f"🔄 Auto Crypto Withdrawals: 🔒 Disabled — manual review only\n\n"
             f"Tap buttons below or use commands to change."
         )
         keyboard = [
@@ -29214,7 +28989,7 @@ async def handle_owner_panel_callbacks(query, context: ContextTypes.DEFAULT_TYPE
             pass
         # Re-render settings
         maint_lbl = "🔴 Turn OFF Maintenance" if casino_maintenance_mode else "🟢 Turn ON Maintenance"
-        auto_lbl  = "🔴 Disable Auto Crypto"  if auto_crypto_enabled   else "🟢 Enable Auto Crypto"
+        auto_lbl  = "🔒 Automatic Payouts Disabled"
         settings_msg = (
             f"⚙️ <b>CASINO SETTINGS</b>\n\n"
             f"💰 Min Bet: ${MIN_BET}\n"
@@ -29222,7 +28997,7 @@ async def handle_owner_panel_callbacks(query, context: ContextTypes.DEFAULT_TYPE
             f"📥 Min Deposit: ${MIN_DEPOSIT:.2f}\n"
             f"📤 Min Withdrawal: ${MIN_WITHDRAWAL:.2f}\n"
             f"🛠 Maintenance: {'🔴 ON' if casino_maintenance_mode else '🟢 OFF'}\n"
-            f"🔄 Auto Crypto Withdrawals: {'🟢 ON' if auto_crypto_enabled else '🔴 OFF'}\n\n"
+            f"🔄 Auto Crypto Withdrawals: 🔒 Disabled — manual review only\n\n"
             f"Tap buttons below or use commands to change."
         )
         keyboard = [
@@ -32702,10 +32477,6 @@ async def withdrawal_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not update.message or not update.message.from_user:
         return
 
-    if payments_blocked_for(update.message.from_user.id):
-        await update.message.reply_text(PAYMENT_MAINTENANCE_MESSAGE, parse_mode=ParseMode.HTML)
-        return
-
     # Force withdrawal to DM — never process in group chats
     if update.effective_chat and update.effective_chat.type != 'private':
         try:
@@ -32726,50 +32497,6 @@ async def withdrawal_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     user_currency = get_user_currency(user_id)
     balance = get_user_balance(user_id)
 
-    # Play-only balance gate — must have deposited or received a tip
-    _is_tip_wd = bool(user_tip_received.get(user_id))
-    _has_dep_wd = bool(player_data.get(user_id, {}).get('deposited'))
-    if not _has_dep_wd and not _is_tip_wd:
-        await update.message.reply_text(
-            "⚠️ <b>Withdrawable Balance Unavailable</b>\n\n"
-            "Only deposited funds and eligible tipped deposited balances can be withdrawn.\n"
-            "Bonus or promotional balances may require wagering before withdrawal.\n\n"
-            "Make a real deposit to unlock withdrawals.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🎁 Telegram Premium", callback_data="premium_withdraw_menu")
-            ]]),
-            parse_mode=ParseMode.HTML
-        )
-        return
-
-    # Check wagering requirement — tip recipients bypass (tipped funds withdraw instantly)
-    wager_req = get_wagering_requirement_remaining(user_id)
-    if wager_req > 0 and not _is_tip_wd:
-        await update.message.reply_text(
-            "⚠️ <b>Withdrawable Balance Unavailable</b>\n\n"
-            "Only deposited funds and eligible tipped deposited balances can be withdrawn. "
-            "Bonus or promotional balances may require wagering before withdrawal.\n\n"
-            f"📊 Wagering remaining: <b>{format_balance_in_currency(wager_req, user_currency)}</b>\n\n"
-            "Play games to fulfill the requirement and unlock your withdrawal.",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🎁 Telegram Premium", callback_data="premium_withdraw_menu")
-            ]]),
-            parse_mode=ParseMode.HTML
-        )
-        return
-
-    if balance < MIN_WITHDRAWAL:
-        await update.message.reply_text(
-            f"⚠️ <b>Insufficient Balance</b>\n\n"
-            f"Your balance: {format_balance_in_currency(balance, user_currency)}\n"
-            f"Minimum withdrawal: <b>{format_balance_in_currency(MIN_WITHDRAWAL, user_currency)}</b>",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("🎁 Telegram Premium", callback_data="premium_withdraw_menu")
-            ]]),
-            parse_mode=ParseMode.HTML
-        )
-        return
-
     keyboard = []
     for i in range(0, len(WITHDRAWAL_OPTIONS), 2):
         row = []
@@ -32779,14 +32506,16 @@ async def withdrawal_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 row.append(InlineKeyboardButton(display_name, callback_data=f"np_withdraw_{np_code}"))
         keyboard.append(row)
 
-    keyboard.append([InlineKeyboardButton("BACK", callback_data="back_to_menu")])
     keyboard.append([InlineKeyboardButton("🎁 Telegram Premium", callback_data="premium_withdraw_menu")])
+    keyboard.append([InlineKeyboardButton("BACK", callback_data="back_to_menu")])
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     withdrawal_message = (
         f"💸 <b>Withdraw</b>\n\n"
         f"Your current balance: <b>{format_balance_in_currency(balance, user_currency)}</b>\n\n"
-        f"Choose the cryptocurrency you want to withdraw into:"
+        f"Choose a coin or Telegram Premium.\n"
+        f"Minimum crypto request: <b>${MIN_WITHDRAWAL:.2f}</b>\n\n"
+        f"Crypto requests go to the owner for review. Rejected requests are refunded."
     )
 
     await update.message.reply_text(withdrawal_message, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
@@ -32828,10 +32557,9 @@ async def withdraw_crypto_command(update: Update, context: ContextTypes.DEFAULT_
     if not update.message or not update.message.from_user:
         return
 
-    if payments_blocked_for(update.message.from_user.id):
-        await update.message.reply_text(PAYMENT_MAINTENANCE_MESSAGE, parse_mode=ParseMode.HTML)
-        return
-
+    user_id = str(update.message.from_user.id)
+    user_currency = get_user_currency(user_id)
+    balance = get_user_balance(user_id)
     keyboard = []
     for i in range(0, len(WITHDRAWAL_OPTIONS), 2):
         row = []
@@ -32841,71 +32569,16 @@ async def withdraw_crypto_command(update: Update, context: ContextTypes.DEFAULT_
                 row.append(InlineKeyboardButton(display_name, callback_data=f"np_withdraw_{np_code}"))
         keyboard.append(row)
 
+    keyboard.append([InlineKeyboardButton("🎁 Telegram Premium", callback_data="premium_withdraw_menu")])
     keyboard.append([InlineKeyboardButton("BACK", callback_data="back_to_menu")])
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     withdrawal_message = (
         f"💸 <b>Withdraw</b>\n\n"
-        f"There are {len(WITHDRAWAL_OPTIONS)} cryptocurrencies supported for withdrawals.\n\n"
-        f"Choose your favourite one!"
-    )
-
-    await update.message.reply_text(withdrawal_message, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
-
-    user_id = str(update.message.from_user.id)
-    user_currency = get_user_currency(user_id)
-    balance = get_user_balance(user_id)
-
-    # Check 3x Wager Requirement
-    wager_req = float(player_data.get(user_id, {}).get('wager_requirement', 0.0))
-    if wager_req > 0:
-        await update.message.reply_text(
-            f"❌ <b>Wager Requirement Not Met</b>\n\n"
-            f"You must wager <b>{format_balance_in_currency(wager_req, user_currency)}</b> more before you can withdraw.\n"
-            f"This is part of our 3x anti-wash rule for all balance increases.",
-            parse_mode=ParseMode.HTML
-        )
-        return
-
-    # Check if user has sufficient balance
-    if balance < MIN_WITHDRAWAL:
-        await update.message.reply_text(
-            f"❌ <b>Insufficient Balance</b>\n\n"
-            f"Your balance: {format_balance_in_currency(balance, user_currency)}\n"
-            f"Minimum withdrawal: {format_balance_in_currency(MIN_WITHDRAWAL, get_user_currency(user_id))}\n\n"
-            f"Please deposit more funds to withdraw.",
-            parse_mode=ParseMode.HTML
-        )
-        return
-
-    # Create crypto selection keyboard for withdrawal
-    keyboard = []
-    crypto_row = []
-
-    # Group cryptocurrencies in rows of 2
-    crypto_list = list(SUPPORTED_CRYPTOCURRENCIES.keys())
-    for i, crypto in enumerate(crypto_list):
-        crypto_info = SUPPORTED_CRYPTOCURRENCIES[crypto]
-        crypto_row.append(InlineKeyboardButton(f"{crypto} - {crypto_info['name']}", callback_data=f"crypto_withdraw_{crypto}"))
-
-        if len(crypto_row) == 2 or i == len(crypto_list) - 1:
-            keyboard.append(crypto_row)
-            crypto_row = []
-
-    keyboard.append([InlineKeyboardButton("📊 Check Balance", callback_data="check_balance")])
-    keyboard.append([InlineKeyboardButton("🔥 Back to Menu", callback_data="back_to_menu")])
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    withdrawal_message = (
-        f"💸 <b>Crypto Withdrawal Menu</b> 💸\n\n"
-        f"Your current balance: {format_balance_in_currency(balance, user_currency)}\n"
-        f"Minimum withdrawal: {format_balance_in_currency(MIN_WITHDRAWAL, get_user_currency(user_id))}\n\n"
-        f"Choose a cryptocurrency to withdraw:\n"
-        f"✅ Convert USD to crypto instantly\n"
-        f"✅ Multiple networks supported\n"
-        f"✅ Direct transfer to your wallet\n"
-        f"✅ Low withdrawal fees\n\n"
-        f"Select a cryptocurrency below:"
+        f"Your current balance: <b>{format_balance_in_currency(balance, user_currency)}</b>\n\n"
+        f"Choose a coin or Telegram Premium.\n"
+        f"Minimum crypto request: <b>${MIN_WITHDRAWAL:.2f}</b>\n\n"
+        f"Crypto requests go to the owner for review. Rejected requests are refunded."
     )
 
     await update.message.reply_text(withdrawal_message, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
