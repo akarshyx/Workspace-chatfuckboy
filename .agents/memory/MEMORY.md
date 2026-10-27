@@ -1,0 +1,1 @@
+- [NOWPayments test mode](nowpayments-testing.md) — “Sandbox” refers to the SAND asset, not a separate API environment; verify provider docs before treating keys as test-only.
