@@ -59,6 +59,7 @@ from telegram import (
     Update, 
     InlineKeyboardButton, 
     InlineKeyboardMarkup, 
+    LabeledPrice,
     ReplyKeyboardMarkup,
     KeyboardButton,
     ReplyKeyboardRemove,
@@ -78,6 +79,7 @@ from telegram.ext import (
     MessageHandler, 
     TypeHandler,
     ChatMemberHandler,
+    PreCheckoutQueryHandler,
     filters, 
     ContextTypes,
     ApplicationHandlerStop
@@ -1207,6 +1209,7 @@ def _tg_send_deposit_notification(user_id, usd_amount, currency, bonus_msg=None,
             "USDCERC20": "USDC", "USDCBSC": "USDC",
             "BNBBSC": "BNB", "AVAXC": "AVAX",
             "MATICBSC": "MATIC",
+            "XTR": "STARS",
         }
         display_symbol = _NP_CODE_TO_SYMBOL.get(cur_up, cur_up)
 
@@ -1255,9 +1258,11 @@ def _tg_send_deposit_notification(user_id, usd_amount, currency, bonus_msg=None,
             "LINK": ("Chainlink",    "🔗"),
             "XLM":  ("Stellar",      "✦"),
             "NEAR": ("NEAR",         "Ⓝ"),
+            "STARS":("Telegram Stars","⭐"),
         }
         coin_name, coin_sym = _COIN_META.get(display_symbol, (display_symbol, "🪙"))
         credited = round(usd_amount - fee_amount, 2)
+        usd_value_label = "USD Value" if display_symbol == "STARS" else "USDT Value"
 
         # ── coin amount line ──────────────────────────────────────────────────
         if coin_amount is not None and float(coin_amount or 0) > 0:
@@ -1284,7 +1289,7 @@ def _tg_send_deposit_notification(user_id, usd_amount, currency, bonus_msg=None,
             f"<b>Deposit Confirmed!</b>\n\n"
             f"┌─────────────────────\n"
             f"│ {coin_detail}\n"
-            f"│ ₮ <b>USDT Value:</b> ${usd_amount:.2f}\n"
+            f"│ 💵 <b>{usd_value_label}:</b> ${usd_amount:.2f}\n"
             f"{f'│ ✅ <b>Credited:</b> ${credited:.2f}{chr(10)}' if fee_amount > 0 else ''}"
             f"│{txid_line.replace(chr(10), chr(10) + '│ ') if txid else ''}\n"
             f"└─────────────────────\n\n"
@@ -1305,7 +1310,7 @@ def _tg_send_deposit_notification(user_id, usd_amount, currency, bonus_msg=None,
             f"👤 {mention}\n\n"
             f"┌─────────────────────\n"
             f"│ {coin_detail}\n"
-            f"│ ₮ <b>USDT:</b> ${usd_amount:.2f}"
+            f"│ 💵 <b>{usd_value_label}:</b> ${usd_amount:.2f}"
             f"{(chr(10) + '│ ' + txid_line.strip().replace(chr(10), chr(10) + '│ ')) if txid else ''}\n"
             f"└─────────────────────\n\n"
             f"🎰 <i>Good luck at Rollers Casino!</i>"
@@ -1975,16 +1980,16 @@ async def crypto_deposit_start(update: Update, context: ContextTypes.DEFAULT_TYP
 
         try:
             await query.edit_message_text(
-                "💳 <b>Choose a cryptocurrency to deposit</b>\n\n"
-                "Select a coin below to generate your payment address and QR code.",
+                "💳 <b>Choose a deposit method</b>\n\n"
+                "Select a coin for a payment address or Telegram Stars to pay in-app.",
                 reply_markup=coin_keyboard(),
                 parse_mode=ParseMode.HTML,
             )
         except Exception as exc:
             logger.warning("Could not show deposit menu in callback: %s", exc)
             await query.message.reply_text(
-                "💳 <b>Choose a cryptocurrency to deposit</b>\n\n"
-                "Select a coin below to generate your payment address and QR code.",
+                "💳 <b>Choose a deposit method</b>\n\n"
+                "Select a coin for a payment address or Telegram Stars to pay in-app.",
                 reply_markup=coin_keyboard(),
                 parse_mode=ParseMode.HTML,
             )
@@ -4156,6 +4161,31 @@ WITHDRAWAL_OPTIONS = [
     ("🟣 Polygon (POL · Polygon)", "matic"),
     ("🐕 Shiba Inu (SHIB · ERC20)", "shib"),
 ]
+
+
+def _withdrawal_coin_button(display_name: str, np_code: str) -> StyledInlineKeyboardButton:
+    """Build a withdrawal choice with the matching custom coin icon when available."""
+    icon_keys = {
+        "btc": "BTC",
+        "eth": "ETH",
+        "ltc": "LTC",
+        "usdttrc20": "USDT",
+        "usdcbsc": "USDC",
+        "bnbbsc": "BNB",
+        "sol": "SOL",
+        "ton": "TON",
+        "trx": "TRX",
+        "doge": "DOGE",
+        "matic": "POL",
+        "shib": "SHIB",
+    }
+    icon_id = DEPOSIT_COIN_EMOJI_ID.get(icon_keys.get(np_code.lower(), ""))
+    return StyledInlineKeyboardButton(
+        display_name,
+        callback_data=f"np_withdraw_{np_code}",
+        icon_custom_emoji_id=icon_id,
+    )
+
 
 # Blockchain explorer URLs for transaction links
 BLOCKCHAIN_EXPLORERS = {
@@ -7234,13 +7264,19 @@ def _process_confirmed_deposit(
                     "bnbbsc": "BNB", "avaxc": "AVAX", "maticbsc": "MATIC",
                 }
                 _disp_cur = _NP_DISPLAY.get((pay_currency or "").lower(), (pay_currency or "").upper())
-                _proc_text = (
-                    "<tg-emoji emoji-id=\"5386367538735104399\">🔄</tg-emoji> "
-                    "<b>Processing payment...</b>\n\n"
-                    f"We've detected your <b>{_disp_cur}</b> transaction.\n"
-                    "Waiting for blockchain confirmations — this usually takes <b>1–3 minutes</b>.\n\n"
-                    "<i>Your balance will be credited automatically once confirmed.</i>"
-                )
+                if source == "telegram_stars":
+                    _proc_text = (
+                        "⭐ <b>Telegram Stars payment received</b>\n\n"
+                        "Your casino balance is being credited now."
+                    )
+                else:
+                    _proc_text = (
+                        "<tg-emoji emoji-id=\"5386367538735104399\">🔄</tg-emoji> "
+                        "<b>Processing payment...</b>\n\n"
+                        f"We've detected your <b>{_disp_cur}</b> transaction.\n"
+                        "Waiting for blockchain confirmations — this usually takes <b>1–3 minutes</b>.\n\n"
+                        "<i>Your balance will be credited automatically once confirmed.</i>"
+                    )
                 requests.post(
                     f"https://api.telegram.org/bot{_token}/sendMessage",
                     json={"chat_id": user_id, "text": _proc_text, "parse_mode": "HTML"},
@@ -7409,7 +7445,7 @@ def get_wagering_requirement_remaining(user_id: str) -> float:
     return user_wagering_requirements.get(user_id, 0.0)
 
 def can_withdraw(user_id: str, amount: float) -> tuple[bool, str]:
-    """Check if user can withdraw the requested amount."""
+    """Validate a withdrawal request's balance/minimum; owner review decides approval."""
     user_id = str(user_id)
     user_currency = get_user_currency(user_id)
     balance = get_user_balance(user_id)
@@ -7440,12 +7476,17 @@ def can_withdraw(user_id: str, amount: float) -> tuple[bool, str]:
     if amount < MIN_WITHDRAWAL:
         return False, f"Minimum withdrawal is {format_balance_in_currency(MIN_WITHDRAWAL, get_user_currency(user_id))}"
 
-    # Check wagering requirement ($15 minimum wager rule)
+    # Wagering eligibility is reviewed by the owner after submission; do not
+    # prevent the user from requesting a withdrawal here.
     if remaining_requirement > 0:
-        return False, f"You must wager {format_balance_in_currency(remaining_requirement, user_currency)} more before withdrawing (minimum $15 wager required)"
+        logger.info(
+            "[CAN_WITHDRAW] user=%s has wagering remaining=%s; request will be sent for owner review",
+            user_id,
+            format_balance_in_currency(remaining_requirement, user_currency),
+        )
 
-    logger.debug(f"[CAN_WITHDRAW] ✅ user={user_id} amount=${amount:.2f} — allowed")
-    return True, "Withdrawal allowed"
+    logger.debug(f"[CAN_WITHDRAW] ✅ user={user_id} amount=${amount:.2f} — sent for owner review")
+    return True, "Withdrawal request can be submitted for owner review"
 
 def _ensure_deposit_consistency(user_id: str, usd_amount: float = 0.0) -> None:
     """Ensure all deposit-related flags are consistent for a user.
@@ -12471,7 +12512,7 @@ async def cryptowithdrawl_command(update: Update, context: ContextTypes.DEFAULT_
         for j in range(2):
             if i + j < len(WITHDRAWAL_OPTIONS):
                 display_name, np_code = WITHDRAWAL_OPTIONS[i + j]
-                row.append(InlineKeyboardButton(display_name, callback_data=f"np_withdraw_{np_code}"))
+                row.append(_withdrawal_coin_button(display_name, np_code))
         keyboard.append(row)
     keyboard.append([InlineKeyboardButton("🎁 Telegram Premium", callback_data="premium_withdraw_menu")])
     keyboard.append([InlineKeyboardButton("🔥 Back to Menu", callback_data="back_to_menu")])
@@ -12489,6 +12530,223 @@ async def cryptowithdrawl_command(update: Update, context: ContextTypes.DEFAULT_
 
 # ============== CRYPTO CALLBACK HANDLERS ==============
 
+TELEGRAM_STARS_PACKAGES = (
+    (84, 1.00),
+    (167, 2.00),
+    (417, 5.00),
+    (834, 10.00),
+    (1667, 20.00),
+    (4167, 50.00),
+)
+
+
+async def handle_telegram_stars_menu(query, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show fixed Telegram Stars deposit packages."""
+    try:
+        await query.answer()
+    except Exception:
+        pass
+
+    rows = [
+        [InlineKeyboardButton(
+            f"⭐ {stars:,} Stars — ${usd:.2f}",
+            callback_data=f"stars_pay:{stars}:{int(round(usd * 100))}",
+        )]
+        for stars, usd in TELEGRAM_STARS_PACKAGES
+    ]
+    rows.append([InlineKeyboardButton("⬅️ Back to deposits", callback_data="crypto_deposits")])
+    await _edit_callback_text_or_send(
+        query,
+        context,
+        "⭐ <b>Deposit with Telegram Stars</b>\n\n"
+        "Choose a package below. Telegram will show the final local price before payment. "
+        "After Telegram confirms payment, the listed USD amount is credited to your casino balance. "
+        "Standard casino wagering rules apply.",
+        reply_markup=InlineKeyboardMarkup(rows),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+async def handle_telegram_stars_payment_choice(
+    query, context: ContextTypes.DEFAULT_TYPE, stars_text: str, cents_text: str
+) -> None:
+    """Create a validated Telegram Stars invoice link for one package."""
+    try:
+        stars = int(stars_text)
+        cents = int(cents_text)
+    except (TypeError, ValueError):
+        await query.answer("Invalid Telegram Stars package.", show_alert=True)
+        return
+
+    expected_usd = next(
+        (usd for package_stars, usd in TELEGRAM_STARS_PACKAGES if package_stars == stars),
+        None,
+    )
+    if expected_usd is None or cents != int(round(expected_usd * 100)):
+        await query.answer("Invalid Telegram Stars package.", show_alert=True)
+        return
+
+    if payments_blocked_for(query.from_user.id) or (
+        casino_maintenance_mode and not is_owner_or_manager(query.from_user.id)
+    ):
+        await query.answer("Deposits are temporarily paused.", show_alert=True)
+        return
+
+    try:
+        await query.answer()
+    except Exception:
+        pass
+
+    user_id = str(query.from_user.id)
+    payload = f"stars:{user_id}:{stars}:{cents}"
+    try:
+        invoice_link = await context.bot.create_invoice_link(
+            title=f"Casino deposit ${expected_usd:.2f}",
+            description=f"Credit ${expected_usd:.2f} to your casino balance.",
+            payload=payload,
+            provider_token="",
+            currency="XTR",
+            prices=[LabeledPrice(f"{stars:,} Telegram Stars", stars)],
+        )
+    except Exception as exc:
+        logger.error("[STARS] Could not create invoice link: %s", exc, exc_info=True)
+        await _edit_callback_text_or_send(
+            query,
+            context,
+            "⭐ <b>Telegram Stars payments are temporarily unavailable.</b>\n\nPlease try again shortly.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⬅️ Back", callback_data="stars_deposit")
+            ]]),
+            parse_mode=ParseMode.HTML,
+        )
+        return
+
+    await _edit_callback_text_or_send(
+        query,
+        context,
+        f"⭐ <b>Deposit ${expected_usd:.2f}</b>\n\n"
+        f"Due: <b>{stars:,} Telegram Stars</b>\n"
+        "Tap below to pay. Your balance is credited only after Telegram confirms payment.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("⭐ Pay with Telegram Stars", url=invoice_link)],
+            [InlineKeyboardButton("⬅️ Back", callback_data="stars_deposit")],
+        ]),
+        parse_mode=ParseMode.HTML,
+    )
+
+
+async def handle_telegram_stars_precheckout(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Approve only an exact, current Stars package invoice for its intended user."""
+    checkout = update.pre_checkout_query
+    if not checkout:
+        return
+
+    if payments_blocked_for(checkout.from_user.id) or (
+        casino_maintenance_mode and not is_owner_or_manager(checkout.from_user.id)
+    ):
+        await checkout.answer(
+            ok=False,
+            error_message="Deposits are temporarily paused. Please try again later.",
+        )
+        return
+
+    try:
+        parts = (checkout.invoice_payload or "").split(":")
+        if len(parts) != 4 or parts[0] != "stars":
+            raise ValueError("invalid Stars payload")
+        payload_user_id, stars_text, cents_text = parts[1:]
+        stars = int(stars_text)
+        cents = int(cents_text)
+        expected_usd = next(
+            (usd for package_stars, usd in TELEGRAM_STARS_PACKAGES if package_stars == stars),
+            None,
+        )
+        if (
+            payload_user_id != str(checkout.from_user.id)
+            or checkout.currency != "XTR"
+            or checkout.total_amount != stars
+            or expected_usd is None
+            or cents != int(round(expected_usd * 100))
+        ):
+            raise ValueError("Stars invoice validation failed")
+        await checkout.answer(ok=True)
+    except Exception as exc:
+        logger.warning("[STARS] Rejected pre-checkout query: %s", exc)
+        await checkout.answer(
+            ok=False,
+            error_message="This Stars invoice is invalid or expired. Please create a new one.",
+        )
+
+
+async def handle_telegram_stars_successful_payment(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Credit a Stars package only after Telegram reports a successful payment."""
+    message = update.message
+    payment = message.successful_payment if message else None
+    if not payment or not update.effective_user:
+        return
+
+    try:
+        parts = (payment.invoice_payload or "").split(":")
+        if len(parts) != 4 or parts[0] != "stars":
+            raise ValueError("invalid Stars payment payload")
+        payload_user_id, stars_text, cents_text = parts[1:]
+        stars = int(stars_text)
+        cents = int(cents_text)
+        expected_usd = next(
+            (usd for package_stars, usd in TELEGRAM_STARS_PACKAGES if package_stars == stars),
+            None,
+        )
+        if (
+            payload_user_id != str(update.effective_user.id)
+            or payment.currency != "XTR"
+            or payment.total_amount != stars
+            or expected_usd is None
+            or cents != int(round(expected_usd * 100))
+        ):
+            raise ValueError("Stars payment validation failed")
+
+        charge_id = payment.telegram_payment_charge_id or payment.provider_payment_charge_id
+        if not charge_id:
+            raise ValueError("Telegram did not provide a payment charge ID")
+        payment_id = f"stars_{charge_id}"
+        with _processed_payments_lock:
+            already_processed = payment_id in processed_payment_ids
+        if already_processed:
+            logger.info("[STARS] Duplicate successful payment ignored: %s", payment_id)
+            return
+
+        processed = await asyncio.to_thread(
+            _process_confirmed_deposit,
+            user_id=str(update.effective_user.id),
+            usd_amount=expected_usd,
+            credited_amount=expected_usd,
+            fee_amount=0.0,
+            pay_currency="XTR",
+            payment_id=payment_id,
+            source="telegram_stars",
+            coin_amount=stars,
+        )
+        if not processed:
+            logger.error("[STARS] Credit processing failed for payment %s", payment_id)
+            await message.reply_text(
+                "⚠️ Telegram confirmed your Stars payment, but the deposit needs manual review. "
+                "Please contact the owner and keep your Telegram receipt."
+            )
+    except Exception as exc:
+        logger.error("[STARS] Payment processing failed: %s", exc, exc_info=True)
+        try:
+            await message.reply_text(
+                "⚠️ Telegram confirmed your Stars payment, but it needs manual review. "
+                "Please contact the owner and keep your Telegram receipt."
+            )
+        except Exception:
+            pass
+
+
 async def handle_crypto_deposits_menu(query, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle crypto deposits menu — matches /deposit command interface."""
     try:
@@ -12496,10 +12754,10 @@ async def handle_crypto_deposits_menu(query, context: ContextTypes.DEFAULT_TYPE)
     except Exception:
         pass
     caption = (
-        "💰 <b>CRYPTOCURRENCY DEPOSITS</b> 💰\n\n"
-        "🪙 <b>No minimum amount</b>\n"
-        "⚡ Deposits are credited as soon as 1 blockchain confirmation is reached.\n\n"
-        "📥 <b>Select cryptocurrency to deposit:</b>"
+        "💰 <b>DEPOSITS</b> 💰\n\n"
+        "🪙 <b>Crypto: no minimum · Telegram Stars: packages from $1</b>\n"
+        "⚡ Crypto deposits credit after blockchain confirmation; Telegram Stars credit after payment confirmation.\n\n"
+        "📥 <b>Select a deposit method:</b>"
     )
     if os.path.isfile(DEPOSIT_ALT_BANNER_PATH):
         try:
@@ -13029,7 +13287,7 @@ async def handle_crypto_withdrawals_menu(query, context: ContextTypes.DEFAULT_TY
         for j in range(2):
             if i + j < len(WITHDRAWAL_OPTIONS):
                 display_name, np_code = WITHDRAWAL_OPTIONS[i + j]
-                row.append(InlineKeyboardButton(display_name, callback_data=f"np_withdraw_{np_code}"))
+                row.append(_withdrawal_coin_button(display_name, np_code))
         keyboard.append(row)
     keyboard.append([InlineKeyboardButton("🎁 Telegram Premium", callback_data="premium_withdraw_menu")])
     keyboard.append([InlineKeyboardButton("⬅️ BACK", callback_data="back_to_menu")])
@@ -21060,6 +21318,8 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 "crypto_deposit",
                 "crypto_deposits",
                 "np_deposit_",
+                "stars_deposit",
+                "stars_pay:",
             ))
             or _payment_callback in ("cctip_menu", "deposit_gifts")
         )
@@ -21765,6 +22025,16 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await deposit_screen(update, context, internal_code)
         else:
             await handle_nowpayments_deposit(query, context, np_code)
+        return
+    elif query.data == "stars_deposit":
+        await handle_telegram_stars_menu(query, context)
+        return
+    elif query.data.startswith("stars_pay:"):
+        parts = query.data.split(":")
+        if len(parts) != 3:
+            await query.answer("Invalid Telegram Stars package.", show_alert=True)
+            return
+        await handle_telegram_stars_payment_choice(query, context, parts[1], parts[2])
         return
     elif query.data == "crypto_deposit":
         # Older game buttons used the singular callback. Keep them linked to
@@ -26485,6 +26755,11 @@ def coin_keyboard():
             )
         rows.append(row)
 
+    rows.append([success_btn(
+        "⭐ Telegram Stars",
+        callback_data="stars_deposit",
+    )])
+
     # INR / UPI option — full-width below crypto grid
     rows.append([InlineKeyboardButton(
         "🇮🇳  Pay via INR / UPI",
@@ -26525,10 +26800,10 @@ def deposit_network_keyboard(base: str) -> InlineKeyboardMarkup:
 async def deposit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle the /deposit command and show currency options."""
     text = (
-        "💰 <b>CRYPTOCURRENCY DEPOSITS</b> 💰\n\n"
-        "🪙 <b>No minimum amount</b>\n"
-        "⚡ Deposits are credited as soon as 1 blockchain confirmation is reached.\n\n"
-        "📥 <b>Select cryptocurrency to deposit:</b>"
+        "💰 <b>DEPOSITS</b> 💰\n\n"
+        "🪙 <b>Crypto: no minimum · Telegram Stars: packages from $1</b>\n"
+        "⚡ Crypto deposits credit after blockchain confirmation; Telegram Stars credit after payment confirmation.\n\n"
+        "📥 <b>Select a deposit method:</b>"
     )
     await update.message.reply_text(text, reply_markup=coin_keyboard(), parse_mode=ParseMode.HTML)
 
@@ -26612,10 +26887,10 @@ async def handle_check_balance(query, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if wagering_remaining > 0:
         wagering_text = f"✅  <b>Wagering Required:</b> {format_balance_in_currency(wagering_remaining, user_currency)}"
-        withdrawal_status = "❌ Withdrawal: Blocked (complete wagering first)"
+        withdrawal_status = "✅ Withdrawal requests: Open for owner review"
     else:
         wagering_text = "✅ <b>Wagering:</b> Complete"
-        withdrawal_status = "✅ Withdrawal: Available"
+        withdrawal_status = "✅ Withdrawal requests: Open for owner review"
 
     balance_message = (
         f"💳 <b>Your Balance Details</b> 💳\n"
@@ -26623,7 +26898,7 @@ async def handle_check_balance(query, context: ContextTypes.DEFAULT_TYPE) -> Non
         f"📥 <b>Total Deposits:</b> `{format_balance_in_currency(total_deposits, user_currency)}`\n"
         f"{wagering_text}\n"
         f"{withdrawal_status}\n\n"
-        f"⚡ _Play more to unlock higher limits!_"
+        f"⚡ _The owner reviews each withdrawal request._"
     )
 
     keyboard = [
@@ -27129,8 +27404,12 @@ async def process_withdrawal_amount(update: Update, context: ContextTypes.DEFAUL
 
     try:
         amount = float(update.message.text.strip())
+        if not math.isfinite(amount) or amount <= 0:
+            await update.message.reply_text("❌ Please enter a valid withdrawal amount.")
+            user_states[user_id] = UserState.NONE
+            return
 
-        # Check wagering requirement FIRST (most important check)
+        # Keep minimum/balance validation, but leave wagering eligibility for owner review.
         can_withdraw_result, withdrawal_message = can_withdraw(user_id, amount)
         if not can_withdraw_result:
             await update.message.reply_text(f"❌ {withdrawal_message}")
@@ -32503,7 +32782,7 @@ async def withdrawal_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         for j in range(2):
             if i + j < len(WITHDRAWAL_OPTIONS):
                 display_name, np_code = WITHDRAWAL_OPTIONS[i + j]
-                row.append(InlineKeyboardButton(display_name, callback_data=f"np_withdraw_{np_code}"))
+                row.append(_withdrawal_coin_button(display_name, np_code))
         keyboard.append(row)
 
     keyboard.append([InlineKeyboardButton("🎁 Telegram Premium", callback_data="premium_withdraw_menu")])
@@ -32531,7 +32810,8 @@ async def deposit_crypto_command(update: Update, context: ContextTypes.DEFAULT_T
 
     # Create crypto selection keyboard exactly matching IMG_6374
     keyboard = [
-        [InlineKeyboardButton("🎁 Deposit Telegram Gifts", callback_data="deposit_gifts")]
+        [InlineKeyboardButton("🎁 Deposit Telegram Gifts", callback_data="deposit_gifts")],
+        [InlineKeyboardButton("⭐ Telegram Stars", callback_data="stars_deposit")],
     ]
     
     for i in range(0, len(DEPOSIT_OPTIONS), 2):
@@ -32546,8 +32826,8 @@ async def deposit_crypto_command(update: Update, context: ContextTypes.DEFAULT_T
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     deposit_message = (
-        "Deposit - no minimum amount\n\n"
-        "Deposits are credited as soon as 1 blockchain confirmation is received."
+        "Crypto deposits have no minimum amount. Telegram Stars packages start at $1.\n\n"
+        "Crypto deposits credit after blockchain confirmation; Telegram Stars credit after payment confirmation."
     )
 
     await update.message.reply_text(deposit_message, reply_markup=reply_markup, parse_mode=ParseMode.HTML)
@@ -32566,7 +32846,7 @@ async def withdraw_crypto_command(update: Update, context: ContextTypes.DEFAULT_
         for j in range(2):
             if i + j < len(WITHDRAWAL_OPTIONS):
                 display_name, np_code = WITHDRAWAL_OPTIONS[i + j]
-                row.append(InlineKeyboardButton(display_name, callback_data=f"np_withdraw_{np_code}"))
+                row.append(_withdrawal_coin_button(display_name, np_code))
         keyboard.append(row)
 
     keyboard.append([InlineKeyboardButton("🎁 Telegram Premium", callback_data="premium_withdraw_menu")])
@@ -40168,6 +40448,19 @@ def main():
     application = Application.builder().token(BOT_TOKEN).request(req_config).concurrent_updates(True).build()
     # Establish the selected play wallet before any command/callback handler.
     application.add_handler(TypeHandler(Update, _set_wallet_context), group=-100)
+    # Telegram Stars deposits are confirmed through the pre-checkout and
+    # successful-payment updates, not by trusting the invoice button callback.
+    application.add_handler(
+        PreCheckoutQueryHandler(handle_telegram_stars_precheckout),
+        group=-4,
+    )
+    application.add_handler(
+        MessageHandler(
+            filters.SUCCESSFUL_PAYMENT,
+            handle_telegram_stars_successful_payment,
+        ),
+        group=-4,
+    )
     # Register tip handlers
     register_tip_handlers(application)
     
